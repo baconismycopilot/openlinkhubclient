@@ -120,7 +120,10 @@ def print_ack(response: Any) -> None:
         console.print(str(response))
         return
     code = response.get("code")
-    ok = isinstance(code, int) and code < 400
+    # The live server reports many failures as code 200 with status 0 (e.g.
+    # "non-existing speed profile"), which the client doesn't raise on — only
+    # a status-1 envelope is an actual success.
+    ok = isinstance(code, int) and code < 400 and response.get("status") != 0
     style = "green" if ok else "red"
     message = response.get("message") or response.get("data") or ("OK" if ok else "Failed")
     console.print(f"[{style}]{message}[/{style}] (code={code})")

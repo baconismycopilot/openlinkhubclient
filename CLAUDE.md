@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 `olh` is a command-line client for [OpenLinkHub](https://github.com/jurkovic-nikola/OpenLinkHub)'s REST API — a Linux daemon that controls Corsair iCUE LINK hardware (AIOs, fans, hubs, keyboards, mice, headsets) and normally exposes a web UI on `127.0.0.1:27003`. This project wraps that same HTTP API in a scriptable CLI so hardware can be controlled from the terminal instead of only the browser. It was built and verified against a real running OpenLinkHub instance (an iCUE LINK System Hub with an AIO and several fans), not just against the API docs — see "Verified against real hardware" below for what that caught.
 
-The CLI covers the entire documented API surface (`api/README.md` in the upstream repo, fetched live from GitHub during development — there's no local copy of it in this repo, so if the upstream API changes, re-fetch that file rather than trusting this doc's endpoint list to stay current): devices, sensors, color, LED, speed, temperature profiles, macros, dashboard settings, input key reference data, keyboard/mouse/headset device settings, LCD, brightness, hub ports, ARGB, PSU, the RGB scheduler, and user/keyboard profiles. One `click.Group` per resource area, 20 groups, 70 subcommands total.
+The CLI covers the entire documented API surface (`api/README.md` in the upstream repo, fetched live from GitHub during development — there's no local copy of it in this repo, so if the upstream API changes, re-fetch that file rather than trusting this doc's endpoint list to stay current): devices, sensors, color, LED, speed, temperature profiles, macros, dashboard settings, input key reference data, keyboard/mouse/headset device settings, LCD, brightness, hub ports, ARGB, PSU, the RGB scheduler, and user/keyboard profiles. One `click.Group` per resource area, 20 groups, 70 subcommands total — plus a convenience layer (`fan`, `light`, `status`, `apply`, see "Convenience layer" under Architecture) that resolves human-friendly channel names so everyday operations don't need raw device/channel ids.
 
 ## Setup
 
@@ -33,6 +33,9 @@ uv run olh -j devices list              # raw API JSON (for jq/scripting)
 uv run olh -y devices list              # raw API YAML
 uv run olh sensors cpu                  # "45.2 °C"
 uv run olh sensors cpu --clean          # 45.25
+uv run olh status                       # dashboard table: every channel's profile/RPM/temp/RGB
+uv run olh fan set pump quiet           # convenience layer: no ids needed (see Architecture)
+uv run olh light set rainbow            # RGB effect on every channel of every device
 uv run olh color set --device-id <id> --channel-id -1 --profile rainbow
 uv run olh macro delete 3               # prompts "Delete macro 3 entirely? [y/N]:"
 uv run olh macro delete 3 --yes         # skips the prompt
@@ -79,6 +82,10 @@ Nested dict/list *values* inside cells (e.g. a device's full `GetDevice` payload
 
 **Nested/nontrivial payload fields** (temperature graph `points`, mouse `stages`/`colorZones`) go through `commands/_shared.py`'s `JSON` click param type — a `--points '[{"x":0,"y":25},...]'`-style raw-JSON string option — rather than inventing bespoke flag-per-field syntax for arbitrarily-shaped nested data. Simple nested objects with a fixed shape (an RGB triplet) instead get typed `--red/--green/--blue` int options via the `rgb_options` decorator, since that's friendlier than requiring `--color '{"red":255,...}'` for something this common.
 
+### Convenience layer
+
+`fan`, `light`, `status`, and `apply` (in `commands/fan.py`, `light.py`, `status.py`, `apply.py`) sit on top of the raw 1:1 groups and mirror how the WebUI simplifies things: address channels by their user-assigned `label`, class (`pump` — which also matches description `"AIO"`, since a real AIO's pump channel reports `"AIO"` not `"Pump"`), literal channel id, or `all` (the `channelId: -1` sentinel the WebUI itself posts, fanned out per device). All resolution lives in `commands/_resolve.py`: `fetch_channels()` flattens `GET /api/devices/` (the channel map is nested at `entry["GetDevice"]["devices"]` — one level deeper than the docs example suggests at a glance), and `resolve_channel()` matches in tiers (id → exact label → description → label substring) so an exact match always beats a substring, with ambiguity/not-found raising `click.UsageError` listing the candidates. `fan set NAME VALUE` auto-detects VALUE: numeric (`50` / `50%`) → `POST /api/speed/manual` (requires `manual: true` in the daemon's config.json, else a clean 405 error), anything else → validated case-insensitively against `GET /api/temperatures/` and posted to `/api/speed` with the server's canonical casing. `light set` validates effects per-device against `GET /api/color/` *before* posting anything, so a typo can't apply to one hub then error on the next. The list-style commands (`fan list`, `light list`, `status`, `light profiles`) render *synthesized* rows through `obj.render(rows)` — so `-j`/`-y` emit the simplified projection (scriptable: `olh -j fan list | jq '.[].rpm'`), not the raw envelope; the raw envelope stays available via `olh -j devices list`. Write acks go through `output.print_ack`, which treats the server's `code: 200, status: 0` failure envelopes (how OpenLinkHub reports e.g. a nonexistent speed profile without raising an HTTP error) as failures, not successes.
+
 ## Verified against real hardware
 
 This client was checked against a live OpenLinkHub instance, not just its docs, and that caught three real bugs before they shipped:
@@ -103,6 +110,8 @@ Two other doc inconsistencies found while implementing (not bugs in this client,
 - `test_cli_help.py` — `olh --help` shows full command descriptions, not Click's default truncated-with-`...` summaries (see "Verified against real hardware" #2).
 - `test_cli_writes.py` — representative POST (flat payload, nested payload like keyboard RGB), PUT, DELETE-with-confirmation (declined/accepted/`--yes`-bypassed), and the `dashboard update` GET-merge-POST behavior specifically (see "Verified against real hardware" #3 — this one has real logic worth protecting with a test, unlike the thin pass-through commands).
 - `test_cli_errors.py` — a connection failure and an API error both surface as clean, non-traceback failures through `cli()` (`CliRunner`) and through `main()`'s actual error-printing/`sys.exit(1)` path.
+- `test_resolve.py` — pure-unit coverage of `_resolve.py`: value parsing (`50%`/bare int/profile-name fallthrough/bounds), the tier ordering (exact label beats substring, `pump`→`AIO`), ambiguity and not-found errors, and that `fetch_channels` skips non-hub devices (null `GetDevice`, no channel map).
+- `test_cli_convenience.py` — the resolve-then-POST flows end-to-end against a realistic two-hub `GET /api/devices/` fixture (channel id 1 on both hubs, deliberately): asserts the *second/third* mocked call's body carries the resolved ids and canonical profile casing, `all` fans out one POST per device with `channelId: -1`, error paths make no POST, `-j fan list` emits the synthesized rows (not the raw envelope), and brightness/apply device auto-resolution.
 
 ```bash
 uv run pytest

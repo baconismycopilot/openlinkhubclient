@@ -80,6 +80,19 @@ def test_print_ack_success_is_styled_green(captured_console: Console) -> None:
     assert "code=200" in text
 
 
+def test_print_ack_status_zero_is_a_failure(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The live server reports many failures as code 200 with status 0 (e.g.
+    "non-existing speed profile") — those must not render in success green."""
+    buffer = io.StringIO()
+    styled_console = Console(file=buffer, force_terminal=True, width=200)
+    monkeypatch.setattr(output, "console", styled_console)
+    output.print_ack({"code": 200, "status": 0, "message": "Non-existing speed profile"})
+    text = buffer.getvalue()
+    assert "Non-existing speed profile" in text
+    assert "\x1b[31m" in text  # red, not green
+    assert "\x1b[32m" not in text
+
+
 def test_confirm_or_abort_yes_skips_prompt(monkeypatch: pytest.MonkeyPatch) -> None:
     def fail_if_called(*_args: object, **_kwargs: object) -> bool:
         raise AssertionError("click.confirm should not be called when yes=True")

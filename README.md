@@ -24,6 +24,27 @@ uv run olh --help
 
 ## Usage
 
+The convenience layer covers the everyday things the OpenLinkHub web UI makes easy — no
+device ids or channel ids needed; channels are addressed by their label, class ("pump"),
+channel number, or "all":
+
+```bash
+olh status                   # one dashboard table: every channel's profile, RPM, temp, RGB
+olh fan list                 # speed-capable channels with current profile and RPM
+olh fan set pump quiet       # apply a named speed profile to the AIO pump
+olh fan set all performance  # ... or to every channel on every device
+olh fan set "Front Intake" 50%   # fixed duty cycle (needs `manual: true` in the daemon config)
+olh light set rainbow        # RGB effect on every channel
+olh light set pump static    # ... or just one
+olh light profiles           # what effect names your device actually supports
+olh light brightness 60      # the web UI's 0-100 brightness slider
+olh apply myProfile          # switch to a saved user profile
+```
+
+Profile names are matched case-insensitively against what the server reports, and typos
+list what's actually available. The full API surface remains exposed 1:1 through the
+resource groups:
+
 ```bash
 olh --help                 # list all resource groups (devices, sensors, color, ...)
 olh devices list            # rich table by default
