@@ -2,6 +2,7 @@ from typing import Any
 
 import click
 
+from olh.commands._resolve import iter_channel_dicts
 from olh.commands._shared import path_argument, render_subtree
 from olh.context import CliContext
 
@@ -57,13 +58,10 @@ def _with_channel_summaries(response: Any) -> Any:
 
 def _channel_summary(entry: dict[str, Any]) -> dict[int, str] | None:
     get_device = entry.get("GetDevice")
-    subs = get_device.get("devices") if isinstance(get_device, dict) else None
-    if not isinstance(subs, dict):
+    if not isinstance(get_device, dict):
         return None
     summary = {}
-    for sub in subs.values():
-        if not isinstance(sub, dict) or "channelId" not in sub:
-            continue
+    for sub in iter_channel_dicts(get_device):
         label = str(sub.get("label") or sub.get("name") or "")
         description = sub.get("description")
         summary[sub["channelId"]] = f"{label} ({description})" if description else label

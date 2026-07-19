@@ -5,7 +5,9 @@ names against what the server actually has so the canonical casing is sent."""
 
 from __future__ import annotations
 
+from collections.abc import Iterable, Iterator
 from dataclasses import dataclass
+from typing import Any
 
 import click
 
@@ -31,43 +33,53 @@ class Channel:
     temperature: str | None
 
 
-def fetch_channels(client: OpenLinkHubClient) -> list[Channel]:
-    """GET /api/devices/ and flatten every hub's channel map. The channel map
-    lives at entry["GetDevice"]["devices"]; non-hub devices (mice, dongles)
-    have no such map — or a null GetDevice — and are skipped."""
-    envelope = client.get("/api/devices/")
+def iter_hub_devices(envelope: Any) -> Iterator[tuple[str, dict[str, Any]]]:
+    """Walk a GET /api/devices/ envelope and yield (deviceId, GetDevice) per
+    device, skipping non-hub entries (null GetDevice). The deviceId is the
+    entry's Serial, falling back to its key in the devices map."""
     devices = envelope.get("devices") if isinstance(envelope, dict) else None
-    channels: list[Channel] = []
     if not isinstance(devices, dict):
-        return channels
+        return
     for serial, entry in devices.items():
         if not isinstance(entry, dict):
             continue
         get_device = entry.get("GetDevice")
-        if not isinstance(get_device, dict):
-            continue
-        sub_devices = get_device.get("devices")
-        if not isinstance(sub_devices, dict):
-            continue
-        device_id = entry.get("Serial") or serial
-        for sub in sub_devices.values():
-            if not isinstance(sub, dict) or "channelId" not in sub:
-                continue
-            channels.append(
-                Channel(
-                    device_id=device_id,
-                    channel_id=sub["channelId"],
-                    label=str(sub.get("label") or ""),
-                    name=str(sub.get("name") or ""),
-                    description=str(sub.get("description") or ""),
-                    profile=str(sub.get("profile") or ""),
-                    rgb=str(sub.get("rgb") or ""),
-                    has_speed=bool(sub.get("HasSpeed", False)),
-                    rpm=sub.get("rpm"),
-                    temperature=sub.get("temperatureString"),
-                )
-            )
-    return channels
+        if isinstance(get_device, dict):
+            yield entry.get("Serial") or serial, get_device
+
+
+def iter_channel_dicts(get_device: dict[str, Any]) -> Iterator[dict[str, Any]]:
+    """Yield each channel sub-dict from a GetDevice payload — the map is nested
+    at get_device["devices"], and real entries always carry a channelId."""
+    subs = get_device.get("devices")
+    if not isinstance(subs, dict):
+        return
+    for sub in subs.values():
+        if isinstance(sub, dict) and "channelId" in sub:
+            yield sub
+
+
+def fetch_channels(client: OpenLinkHubClient) -> list[Channel]:
+    """GET /api/devices/ and flatten every hub's channel map. Non-hub devices
+    (mice, dongles) have no channel map — or a null GetDevice — and are
+    skipped."""
+    envelope = client.get("/api/devices/")
+    return [
+        Channel(
+            device_id=device_id,
+            channel_id=sub["channelId"],
+            label=str(sub.get("label") or ""),
+            name=str(sub.get("name") or ""),
+            description=str(sub.get("description") or ""),
+            profile=str(sub.get("profile") or ""),
+            rgb=str(sub.get("rgb") or ""),
+            has_speed=bool(sub.get("HasSpeed", False)),
+            rpm=sub.get("rpm"),
+            temperature=sub.get("temperatureString"),
+        )
+        for device_id, get_device in iter_hub_devices(envelope)
+        for sub in iter_channel_dicts(get_device)
+    ]
 
 
 def resolve_targets(channels: list[Channel], text: str) -> list[tuple[str, int]]:
@@ -81,18 +93,15 @@ def resolve_targets(channels: list[Channel], text: str) -> list[tuple[str, int]]
     return [(channel.device_id, channel.channel_id)]
 
 
-# A real AIO's pump channel has description "AIO", not "Pump" (verified
-# against a live iCUE LINK hub) — "pump" must find it anyway.
-_DESCRIPTION_SYNONYMS = {"pump": {"pump", "aio"}}
-
-
 def resolve_channel(channels: list[Channel], text: str) -> Channel:
     """Match user text against channels in tiers — literal channel id, exact
     label, exact description ("pump"), label substring — so an exact "Pump"
     description match beats a label that merely contains "pump". The first
     tier with any hit decides; more than one hit there is ambiguous."""
     wanted = text.casefold()
-    wanted_descriptions = _DESCRIPTION_SYNONYMS.get(wanted, {wanted})
+    # A real AIO's pump channel has description "AIO", not "Pump" (verified
+    # against a live iCUE LINK hub) — "pump" must find it anyway.
+    wanted_descriptions = {"pump", "aio"} if wanted == "pump" else {wanted}
     tiers: list[list[Channel]] = []
     if text.lstrip("-").isdigit():
         wanted_id = int(text)
@@ -138,6 +147,18 @@ def parse_speed_value(text: str) -> int | None:
     return value
 
 
+def match_canonical(name: str, names: Iterable[str], noun: str, context: str = "") -> str:
+    """Case-insensitively match `name` against the server's canonical names and
+    return the server's casing; unknown names raise listing what exists."""
+    names = list(names)
+    for key in names:
+        if key.casefold() == name.casefold():
+            return key
+    raise click.UsageError(
+        f"Unknown {noun} {name!r}{context}. Available: {', '.join(sorted(names)) or 'none'}."
+    )
+
+
 def resolve_speed_profile(client: OpenLinkHubClient, name: str) -> str:
     """Case-insensitively match `name` against GET /api/temperatures/ keys and
     return the canonical key — the server validates the exact name."""
@@ -145,12 +166,7 @@ def resolve_speed_profile(client: OpenLinkHubClient, name: str) -> str:
     profiles = envelope.get("data") if isinstance(envelope, dict) else None
     if not isinstance(profiles, dict):
         profiles = {}
-    for key in profiles:
-        if key.casefold() == name.casefold():
-            return key
-    raise click.UsageError(
-        f"Unknown speed profile {name!r}. Available: {', '.join(sorted(profiles)) or 'none'}."
-    )
+    return match_canonical(name, profiles, "speed profile")
 
 
 def rgb_profiles_by_device(client: OpenLinkHubClient) -> dict[str, list[str]]:
@@ -172,10 +188,4 @@ def resolve_rgb_profile(profiles_by_device: dict[str, list[str]], device_id: str
     """Case-insensitively match `name` against one device's RGB profiles and
     return the canonical name."""
     profiles = profiles_by_device.get(device_id, [])
-    for key in profiles:
-        if key.casefold() == name.casefold():
-            return key
-    raise click.UsageError(
-        f"Unknown RGB profile {name!r} for device {device_id}. "
-        f"Available: {', '.join(profiles) or 'none'}."
-    )
+    return match_canonical(name, profiles, "RGB profile", f" for device {device_id}")
