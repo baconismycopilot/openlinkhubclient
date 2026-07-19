@@ -1,6 +1,6 @@
 import click
 
-from olh.commands._shared import JSON, path_argument, render_subtree, yes_option
+from olh.commands._shared import JSON, all_option, path_argument, render_subtree, yes_option
 from olh.context import CliContext
 from olh.output import confirm_or_abort
 
@@ -20,27 +20,34 @@ def list_profiles(obj: CliContext) -> None:
 @temperatures.command("get")
 @click.argument("profile")
 @path_argument
+@all_option
 @click.pass_obj
-def get_profile(obj: CliContext, profile: str, path: tuple[str, ...]) -> None:
+def get_profile(obj: CliContext, profile: str, path: tuple[str, ...], show_all: bool) -> None:
     """GET /api/temperatures/<profile>.
 
     PATH drills into the payload one key at a time (case-insensitive), e.g.
-    `olh temperatures get Quiet profiles`.
+    `olh temperatures get Quiet profiles`; --all renders every nested table.
     """
-    render_subtree(obj, obj.client.get(f"/api/temperatures/{profile}"), path, key="data")
+    render_subtree(
+        obj, obj.client.get(f"/api/temperatures/{profile}"), path, key="data", expand=show_all
+    )
 
 
 @temperatures.command("graph")
 @click.argument("profile")
 @path_argument
+@all_option
 @click.pass_obj
-def graph(obj: CliContext, profile: str, path: tuple[str, ...]) -> None:
+def graph(obj: CliContext, profile: str, path: tuple[str, ...], show_all: bool) -> None:
     """GET /api/temperatures/graph/<profile>.
 
     PATH drills into the payload one key at a time (case-insensitive), e.g.
-    `olh temperatures graph Quiet 0` for one curve point.
+    `olh temperatures graph Quiet 0` for one curve point; --all renders
+    every nested table.
     """
-    render_subtree(obj, obj.client.get(f"/api/temperatures/graph/{profile}"), path, key="data")
+    render_subtree(
+        obj, obj.client.get(f"/api/temperatures/graph/{profile}"), path, key="data", expand=show_all
+    )
 
 
 @temperatures.command("create")

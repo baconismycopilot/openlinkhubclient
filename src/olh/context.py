@@ -14,5 +14,5 @@ class CliContext:
     client: OpenLinkHubClient
     output_format: OutputFormat = "table"
 
-    def render(self, response: object, *, key: str | None = None) -> None:
-        output.render(response, output_format=self.output_format, key=key)
+    def render(self, response: object, *, key: str | None = None, expand: bool = False) -> None:
+        output.render(response, output_format=self.output_format, key=key, expand=expand)

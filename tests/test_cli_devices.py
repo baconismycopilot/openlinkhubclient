@@ -116,6 +116,38 @@ _SINGLE_DEVICE = {
 
 
 @responses.activate
+def test_devices_get_hides_subtables_by_default(
+    runner: CliRunner, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Deep fields render as a count plus a PATH/--all hint; their tables
+    only appear when named as a PATH segment or under --all."""
+    monkeypatch.setattr(output, "console", Console(force_terminal=False, width=200))
+    responses.add(responses.GET, f"{BASE_URL}/api/devices/HUBSERIAL", json=_SINGLE_DEVICE)
+
+    result = runner.invoke(cli, ["devices", "get", "HUBSERIAL"])
+
+    assert result.exit_code == 0
+    assert "add 'devices' to the command, or --all" in result.output
+    assert "add 'userProfiles' to the command, or --all" in result.output
+    assert "GPU Intake 1" not in result.output  # the devices sub-table did not render
+
+
+@responses.activate
+def test_devices_get_all_flag_renders_every_subtable(
+    runner: CliRunner, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(output, "console", Console(force_terminal=False, width=200))
+    responses.add(responses.GET, f"{BASE_URL}/api/devices/HUBSERIAL", json=_SINGLE_DEVICE)
+
+    result = runner.invoke(cli, ["devices", "get", "HUBSERIAL", "--all"])
+
+    assert result.exit_code == 0
+    assert "see 'devices' table below" in result.output
+    assert "GPU Intake 1" in result.output  # devices sub-table rendered
+    assert "Gaming" in result.output  # userProfiles sub-table rendered
+
+
+@responses.activate
 def test_devices_get_key_drills_into_field(runner: CliRunner) -> None:
     responses.add(responses.GET, f"{BASE_URL}/api/devices/HUBSERIAL", json=_SINGLE_DEVICE)
 

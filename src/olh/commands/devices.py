@@ -3,7 +3,7 @@ from typing import Any
 import click
 
 from olh.commands._resolve import iter_channel_dicts
-from olh.commands._shared import path_argument, render_subtree
+from olh.commands._shared import all_option, path_argument, render_subtree
 from olh.context import CliContext
 
 
@@ -14,14 +14,15 @@ def devices() -> None:
 
 @devices.command("all")
 @path_argument
+@all_option
 @click.pass_obj
-def all_data(obj: CliContext, path: tuple[str, ...]) -> None:
+def all_data(obj: CliContext, path: tuple[str, ...], show_all: bool) -> None:
     """Show everything OpenLinkHub knows about (GET /api/).
 
     PATH drills into the payload one key at a time (case-insensitive), e.g.
-    `olh devices all <serial> GetDevice`.
+    `olh devices all <serial> GetDevice`; --all renders every nested table.
     """
-    render_subtree(obj, obj.client.get("/api/"), path, key="device")
+    render_subtree(obj, obj.client.get("/api/"), path, key="device", expand=show_all)
 
 
 @devices.command("list")
@@ -81,16 +82,19 @@ def _insert_before(entry: dict[str, Any], key: str, new_key: str, value: Any) ->
 @devices.command("get")
 @click.argument("device_id")
 @path_argument
+@all_option
 @click.pass_obj
-def get_device(obj: CliContext, device_id: str, path: tuple[str, ...]) -> None:
+def get_device(obj: CliContext, device_id: str, path: tuple[str, ...], show_all: bool) -> None:
     """Show one device (GET /api/devices/<device_id>).
 
     PATH drills into the payload one key at a time (case-insensitive) — the
     structured settings the `devices list` table omits, e.g.
     `devices get <id> devices 1` — and renders just that subtree (-j/-y emit
-    it alone, jq-ready).
+    it alone, jq-ready); --all renders every nested table below the main view.
     """
-    render_subtree(obj, obj.client.get(f"/api/devices/{device_id}"), path, key="device")
+    render_subtree(
+        obj, obj.client.get(f"/api/devices/{device_id}"), path, key="device", expand=show_all
+    )
 
 
 @devices.command("set-position")

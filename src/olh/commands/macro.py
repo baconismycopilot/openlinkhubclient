@@ -1,6 +1,6 @@
 import click
 
-from olh.commands._shared import path_argument, render_subtree, yes_option
+from olh.commands._shared import all_option, path_argument, render_subtree, yes_option
 from olh.context import CliContext
 from olh.output import confirm_or_abort
 
@@ -20,14 +20,15 @@ def list_macros(obj: CliContext) -> None:
 @macro.command("get")
 @click.argument("macro_id", type=int)
 @path_argument
+@all_option
 @click.pass_obj
-def get_macro(obj: CliContext, macro_id: int, path: tuple[str, ...]) -> None:
+def get_macro(obj: CliContext, macro_id: int, path: tuple[str, ...], show_all: bool) -> None:
     """GET /api/macro/<macro_id>.
 
     PATH drills into the payload one key at a time (case-insensitive), e.g.
-    `olh macro get 1 actions 0`.
+    `olh macro get 1 actions 0`; --all renders every nested table.
     """
-    render_subtree(obj, obj.client.get(f"/api/macro/{macro_id}"), path, key="data")
+    render_subtree(obj, obj.client.get(f"/api/macro/{macro_id}"), path, key="data", expand=show_all)
 
 
 @macro.command("create")

@@ -19,12 +19,21 @@ error_console = Console(stderr=True)
 OutputFormat = Literal["table", "json", "yaml"]
 
 
-def render(response: Any, *, output_format: OutputFormat = "table", key: str | None = None) -> None:
+def render(
+    response: Any,
+    *,
+    output_format: OutputFormat = "table",
+    key: str | None = None,
+    expand: bool = False,
+) -> None:
     """Render an API response envelope.
 
     `key` names the field inside the envelope that holds the actual payload
     (e.g. "data", "device", "devices", "dashboard"); if omitted, or the key
-    isn't present, the whole response is rendered.
+    isn't present, the whole response is rendered. `expand` (a get command's
+    --all flag) renders every deep field as its own titled sub-table below
+    the kv view; without it, deep fields stay a one-line count plus a hint
+    naming the PATH that shows just that table.
     """
     if output_format == "json":
         print_json(response)
@@ -37,10 +46,12 @@ def render(response: Any, *, output_format: OutputFormat = "table", key: str | N
     if key is not None and isinstance(response, dict) and key in response:
         payload = response[key]
 
-    _render_value(payload)
+    _render_value(payload, expand=expand)
 
 
-def _render_value(payload: Any, *, title: str | None = None, defer: bool = True) -> None:
+def _render_value(
+    payload: Any, *, title: str | None = None, defer: bool = True, expand: bool = False
+) -> None:
     """Shape-route a payload. `title` names it when it renders as a deferred
     sub-table under a kv view. `defer` is False one sub-table level down:
     there, deep values collapse to counts instead of spawning further
@@ -52,7 +63,7 @@ def _render_value(payload: Any, *, title: str | None = None, defer: bool = True)
         elif all(isinstance(v, dict) for v in payload.values()):
             print_table(_dict_of_dicts_to_rows(payload), title=title)
         else:
-            print_kv(payload, title=title, defer=defer)
+            print_kv(payload, title=title, defer=defer, expand=expand)
     elif isinstance(payload, list):
         if not payload:
             console.print("[dim]No data returned.[/dim]")
@@ -111,13 +122,17 @@ def print_table(rows: list[dict[str, Any]], title: str | None = None) -> None:
     console.print(table)
 
 
-def print_kv(data: dict[str, Any], title: str | None = None, *, defer: bool = True) -> None:
+def print_kv(
+    data: dict[str, Any], title: str | None = None, *, defer: bool = True, expand: bool = False
+) -> None:
     """Key/value view of a single object. Flat dict values are flattened into
     `field.subfield` rows; deep dict/list values are never rendered inline.
-    With `defer` (the top level of a get payload) they get a `see table
-    below` marker and render as their own titled table after the kv block;
-    without it (already one sub-table down) they collapse to a count, so
-    structure is always browsed one level at a time."""
+    At the top level of a get payload (`defer`) they collapse to a count plus
+    a hint naming the PATH segment that renders just that table — unless
+    `expand` (the --all flag), where they get a `see table below` marker and
+    render as their own titled table after the kv block. One sub-table down
+    (`defer=False`) they always collapse to a count, so structure is browsed
+    one level at a time."""
     table = Table(
         title=escape(title) if title else None, show_header=False, box=None, show_lines=True
     )
@@ -126,10 +141,13 @@ def print_kv(data: dict[str, Any], title: str | None = None, *, defer: bool = Tr
     deferred: list[tuple[str, Any]] = []
     for field, value in data.items():
         if isinstance(value, dict | list) and _is_deep(value):
-            if defer:
+            if defer and expand:
                 marker = f"[dim]see '{escape(str(field))}' table below[/dim]"
                 table.add_row(escape(str(field)), marker)
                 deferred.append((str(field), value))
+            elif defer:
+                hint = f"[dim]add '{escape(str(field))}' to the command, or --all[/dim]"
+                table.add_row(escape(str(field)), f"{_cell(value)} {hint}")
             else:
                 table.add_row(escape(str(field)), _cell(value))
         elif isinstance(value, dict) and value:

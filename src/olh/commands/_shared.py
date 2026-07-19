@@ -47,6 +47,19 @@ def path_argument[F: Callable[..., Any]](f: F) -> F:
     return click.argument("path", nargs=-1)(f)
 
 
+def all_option[F: Callable[..., Any]](f: F) -> F:
+    """The --all flag every drill-capable get command takes: render every
+    deep field as its own sub-table below the kv view, instead of the
+    default one-line count with a PATH hint."""
+    return click.option(
+        "--all",
+        "show_all",
+        is_flag=True,
+        default=False,
+        help="Render every nested table below the main view (default: counts with a PATH hint).",
+    )(f)
+
+
 def drill(payload: Any, path: tuple[str, ...]) -> Any:
     """Walk PATH segments into a payload one level at a time: dict keys by
     exact match first, then case-insensitively (the API mixes casings and
@@ -89,14 +102,19 @@ def drill(payload: Any, path: tuple[str, ...]) -> Any:
     return node
 
 
-def render_subtree(obj: CliContext, response: Any, path: tuple[str, ...], *, key: str) -> None:
+def render_subtree(
+    obj: CliContext, response: Any, path: tuple[str, ...], *, key: str, expand: bool = False
+) -> None:
     """Shared body of the drill-capable get commands: with no PATH, render
     the envelope's payload; with one, drill into it and render (and -j/-y
     emit) just that subtree, jq-ready. Mirrors render()'s envelope handling:
     the payload lives under `key` when present, else the whole response —
-    so anything visible without a PATH is also drillable with one."""
+    so anything visible without a PATH is also drillable with one. `expand`
+    (the --all flag) renders deep fields as sub-tables instead of counts —
+    it applies to the drilled subtree too, so PATH plus --all expands one
+    level below wherever the PATH landed."""
     if not path:
-        obj.render(response, key=key)
+        obj.render(response, key=key, expand=expand)
         return
     payload = response[key] if isinstance(response, dict) and key in response else response
-    obj.render(drill(payload, path))
+    obj.render(drill(payload, path), expand=expand)
