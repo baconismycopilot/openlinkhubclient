@@ -12,5 +12,6 @@ build/
 # Local Claude Code session settings, not project source
 .claude/
 
-# Project instructions for Claude Code, not published upstream
-CLAUDE.md
+# Private per-host Claude Code notes (session log, local hardware details);
+# the tracked CLAUDE.md holds the public project guidance
+CLAUDE.local.md
