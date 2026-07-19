@@ -1,5 +1,7 @@
 # openlinkhubclient
 
+[![License: GPL-3.0-only](https://img.shields.io/github/license/baconismycopilot/openlinkhubclient)](LICENSE)
+
 A command-line client for [OpenLinkHub](https://github.com/jurkovic-nikola/OpenLinkHub)'s REST API — control Corsair iCUE LINK devices (AIOs, fans, hubs, keyboards, mice, headsets) from the terminal instead of only the web UI.
 
 Verified against a real running OpenLinkHub instance, not just the API docs: an iCUE LINK System Hub with an iCUE LINK TITAN 360 LCD AIO and iCUE LINK RX RGB fans attached. See [CLAUDE.md](CLAUDE.md#verified-against-real-hardware) for the bugs that live testing against this hardware caught.
