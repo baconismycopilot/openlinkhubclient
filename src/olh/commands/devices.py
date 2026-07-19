@@ -2,6 +2,7 @@ from typing import Any
 
 import click
 
+from olh.commands._shared import drill
 from olh.context import CliContext
 
 
@@ -76,29 +77,24 @@ def _insert_before(entry: dict[str, Any], key: str, new_key: str, value: Any) ->
 
 @devices.command("get")
 @click.argument("device_id")
-@click.argument("key", required=False)
+@click.argument("path", nargs=-1)
 @click.pass_obj
-def get_device(obj: CliContext, device_id: str, key: str | None) -> None:
+def get_device(obj: CliContext, device_id: str, path: tuple[str, ...]) -> None:
     """Show one device (GET /api/devices/<device_id>).
 
-    KEY drills into a single field of the payload — the structured settings
-    the `devices list` table omits (e.g. `devices`, `userProfiles`) — and
-    renders just that subtree (-j/-y emit it alone, jq-ready).
+    PATH drills into the payload one key at a time (case-insensitive) — the
+    structured settings the `devices list` table omits, e.g.
+    `devices get <id> devices 1` — and renders just that subtree (-j/-y emit
+    it alone, jq-ready).
     """
     response = obj.client.get(f"/api/devices/{device_id}")
-    if key is None:
+    if not path:
         obj.render(response, key="device")
         return
     device = response.get("device") if isinstance(response, dict) else None
     if not isinstance(device, dict):
         raise click.UsageError(f"Device {device_id!r} returned no payload to drill into.")
-    for field, value in device.items():
-        if field.casefold() == key.casefold():
-            obj.render(value)
-            return
-    raise click.UsageError(
-        f"No field {key!r} on device {device_id}. Available: {', '.join(device)}."
-    )
+    obj.render(drill(device, path))
 
 
 @devices.command("set-position")

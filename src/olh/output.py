@@ -98,21 +98,44 @@ def print_table(rows: list[dict[str, Any]], title: str | None = None) -> None:
         cap = _NESTED_COLUMN_MAX if has_nested else _SCALAR_COLUMN_MAX
         table.add_column(column, overflow="fold", max_width=cap)
     for row in rows:
-        table.add_row(*(_cell(row.get(column)) for column in columns))
+        table.add_row(*(_cell(row.get(column), summarize_deep=True) for column in columns))
     console.print(table)
 
 
 def print_kv(data: dict[str, Any], title: str | None = None) -> None:
+    """Key/value view of a single object. Flat dict values are flattened into
+    `field.subfield` rows; deep dict/list values are never rendered inline —
+    they get a `see table below` marker and render as their own titled table
+    after the kv block (whose own deep cells summarize again, so structure is
+    always browsed one level at a time)."""
     table = Table(title=title, show_header=False, box=None, show_lines=True)
     table.add_column("Field", style="bold")
     table.add_column("Value", overflow="fold")
+    deferred: list[tuple[str, Any]] = []
     for field, value in data.items():
-        if isinstance(value, dict):
+        if isinstance(value, dict | list) and value and _is_deep(value):
+            table.add_row(field, f"[dim]see {field!r} table below[/dim]")
+            deferred.append((field, value))
+        elif isinstance(value, dict):
             for sub_field, sub_value in value.items():
                 table.add_row(f"{field}.{sub_field}", _cell(sub_value))
         else:
             table.add_row(field, _cell(value))
     console.print(table)
+    for field, value in deferred:
+        _render_subtable(field, value)
+
+
+def _render_subtable(name: str, value: dict[Any, Any] | list[Any]) -> None:
+    if isinstance(value, dict) and all(isinstance(v, dict) for v in value.values()):
+        print_table(_dict_of_dicts_to_rows(value), title=name)
+    elif isinstance(value, list) and all(isinstance(item, dict) for item in value):
+        print_table(value, title=name)
+    elif isinstance(value, dict):
+        print_kv(value, title=name)
+    else:
+        console.print(f"[bold]{name}[/bold]")
+        console.print(_cell(value))
 
 
 def print_ack(response: Any) -> None:
@@ -136,19 +159,27 @@ def confirm_or_abort(message: str, *, yes: bool) -> None:
         raise click.Abort()
 
 
-def _cell(value: Any) -> str:
-    """Render a table/kv cell. Nested dict/list values are rendered as
-    indented YAML blocks (no braces/quotes/commas to fight through) rather
-    than summarized — the full payload stays visible in the table itself.
-    Combined with fold-wrapping columns and per-row line separators, deeply
-    nested API objects (e.g. a device's full GetDevice payload) grow the row
-    taller instead of the column wider, which is what made early versions of
-    this table unreadable."""
+def _cell(value: Any, *, summarize_deep: bool = False) -> str:
+    """Render a table/kv cell. Flat dict/list values (scalars only, e.g. a
+    channels map) are rendered as indented YAML blocks — no braces/quotes/
+    commas to fight through, and the row grows taller instead of the column
+    wider. With `summarize_deep` (table cells), values that nest *further*
+    dicts/lists collapse to a count — deeper structure is reached by drilling
+    with a get command's PATH args (or -j/-y), never rendered inline."""
     if value is None:
         return ""
     if isinstance(value, dict | list):
         if not value:
             return "{}" if isinstance(value, dict) else "[]"
+        if summarize_deep and _is_deep(value):
+            if isinstance(value, dict):
+                return f"{{...}} ({len(value)} fields)"
+            return f"[...] ({len(value)} items)"
         text = yaml.safe_dump(value, sort_keys=False, default_flow_style=False, allow_unicode=True)
         return text.rstrip("\n")
     return str(value)
+
+
+def _is_deep(value: dict[Any, Any] | list[Any]) -> bool:
+    items = value.values() if isinstance(value, dict) else value
+    return any(isinstance(item, dict | list) for item in items)

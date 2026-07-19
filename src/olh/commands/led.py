@@ -1,5 +1,6 @@
 import click
 
+from olh.commands._shared import render_subtree
 from olh.context import CliContext
 
 
@@ -17,7 +18,12 @@ def list_led(obj: CliContext) -> None:
 
 @led.command("get")
 @click.argument("device_id")
+@click.argument("path", nargs=-1)
 @click.pass_obj
-def get_led(obj: CliContext, device_id: str) -> None:
-    """GET /api/led/<device_id>."""
-    obj.render(obj.client.get(f"/api/led/{device_id}"), key="data")
+def get_led(obj: CliContext, device_id: str, path: tuple[str, ...]) -> None:
+    """GET /api/led/<device_id>.
+
+    PATH drills into the payload one key at a time (case-insensitive), e.g.
+    `olh led get <id> devices 1 channels` for one channel's per-LED colors.
+    """
+    render_subtree(obj, obj.client.get(f"/api/led/{device_id}"), path, key="data")

@@ -1,6 +1,6 @@
 import click
 
-from olh.commands._shared import JSON, yes_option
+from olh.commands._shared import JSON, render_subtree, yes_option
 from olh.context import CliContext
 from olh.output import confirm_or_abort
 
@@ -19,10 +19,15 @@ def list_profiles(obj: CliContext) -> None:
 
 @temperatures.command("get")
 @click.argument("profile")
+@click.argument("path", nargs=-1)
 @click.pass_obj
-def get_profile(obj: CliContext, profile: str) -> None:
-    """GET /api/temperatures/<profile>."""
-    obj.render(obj.client.get(f"/api/temperatures/{profile}"), key="data")
+def get_profile(obj: CliContext, profile: str, path: tuple[str, ...]) -> None:
+    """GET /api/temperatures/<profile>.
+
+    PATH drills into the payload one key at a time (case-insensitive), e.g.
+    `olh temperatures get Quiet profiles`.
+    """
+    render_subtree(obj, obj.client.get(f"/api/temperatures/{profile}"), path, key="data")
 
 
 @temperatures.command("graph")

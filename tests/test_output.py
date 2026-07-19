@@ -58,7 +58,9 @@ def test_render_scalar_value(captured_console: Console) -> None:
     assert "45.2" in _text(captured_console)
 
 
-def test_render_table_shows_full_nested_data(captured_console: Console) -> None:
+def test_render_table_summarizes_deep_nested_cells(captured_console: Console) -> None:
+    """List views collapse cells that nest further dicts/lists to a count —
+    the full structure belongs to the resource's `get` command."""
     response = {
         "devices": {
             "abc123": {
@@ -69,9 +71,53 @@ def test_render_table_shows_full_nested_data(captured_console: Console) -> None:
     }
     output.render(response, output_format="table", key="devices")
     text = _text(captured_console)
-    assert "rainbow" in text
-    assert "speed: 3" in text
-    assert "use -j/--json for detail" not in text
+    assert "(2 fields)" in text
+    assert "speed: 3" not in text
+
+
+def test_render_table_keeps_flat_nested_cells(captured_console: Console) -> None:
+    """A flat map of scalars (e.g. the channels column) stays fully rendered
+    in list views — only *deep* nesting is summarized."""
+    response = {
+        "devices": {
+            "abc123": {
+                "Product": "iCUE LINK System Hub",
+                "channels": {1: "Pump (AIO)", 2: "Front Fan (Fan)"},
+            }
+        }
+    }
+    output.render(response, output_format="table", key="devices")
+    text = _text(captured_console)
+    assert "Pump (AIO)" in text
+    assert "(2 fields)" not in text
+
+
+def test_render_kv_defers_deep_fields_to_subtables(captured_console: Console) -> None:
+    """A mixed dict (a get payload) never renders deep values inline: the kv
+    block gets a `see table below` marker and the deep field renders as its
+    own titled table, whose deeper cells summarize again."""
+    response = {
+        "data": {
+            "serial": "HUBSERIAL",
+            "devices": {
+                "1": {"ledChannels": 44, "pump": True, "channels": {"0": {"red": 0}}},
+            },
+        }
+    }
+    output.render(response, output_format="table", key="data")
+    text = _text(captured_console)
+    assert "see 'devices' table below" in text
+    assert "44" in text  # sub-table renders the devices rows
+    assert "(1 fields)" in text  # ...with *their* deep cells summarized
+    assert "red: 0" not in text  # per-LED detail needs a PATH drill
+
+
+def test_render_kv_keeps_flat_dict_flattened(captured_console: Console) -> None:
+    response = {"data": {"name": "x", "defaultColor": {"red": 255, "green": 0}}}
+    output.render(response, output_format="table", key="data")
+    text = _text(captured_console)
+    assert "defaultColor.red" in text
+    assert "255" in text
 
 
 def test_print_ack_success_is_styled_green(captured_console: Console) -> None:

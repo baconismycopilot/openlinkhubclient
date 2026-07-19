@@ -1,6 +1,6 @@
 import click
 
-from olh.commands._shared import yes_option
+from olh.commands._shared import render_subtree, yes_option
 from olh.context import CliContext
 from olh.output import confirm_or_abort
 
@@ -19,10 +19,15 @@ def list_macros(obj: CliContext) -> None:
 
 @macro.command("get")
 @click.argument("macro_id", type=int)
+@click.argument("path", nargs=-1)
 @click.pass_obj
-def get_macro(obj: CliContext, macro_id: int) -> None:
-    """GET /api/macro/<macro_id>."""
-    obj.render(obj.client.get(f"/api/macro/{macro_id}"), key="data")
+def get_macro(obj: CliContext, macro_id: int, path: tuple[str, ...]) -> None:
+    """GET /api/macro/<macro_id>.
+
+    PATH drills into the payload one key at a time (case-insensitive), e.g.
+    `olh macro get 1 actions 0`.
+    """
+    render_subtree(obj, obj.client.get(f"/api/macro/{macro_id}"), path, key="data")
 
 
 @macro.command("create")

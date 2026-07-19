@@ -149,6 +149,27 @@ def test_devices_get_unknown_key_lists_available_fields(runner: CliRunner) -> No
 
 
 @responses.activate
+def test_devices_get_path_drills_multiple_levels(runner: CliRunner) -> None:
+    responses.add(responses.GET, f"{BASE_URL}/api/devices/HUBSERIAL", json=_SINGLE_DEVICE)
+
+    result = runner.invoke(cli, ["-j", "devices", "get", "HUBSERIAL", "devices", "1", "label"])
+
+    assert result.exit_code == 0
+    assert "GPU Intake 1" in result.output
+    assert "channelId" not in result.output
+
+
+@responses.activate
+def test_devices_get_bad_deep_segment_names_its_location(runner: CliRunner) -> None:
+    responses.add(responses.GET, f"{BASE_URL}/api/devices/HUBSERIAL", json=_SINGLE_DEVICE)
+
+    result = runner.invoke(cli, ["devices", "get", "HUBSERIAL", "devices", "9"])
+
+    assert result.exit_code != 0
+    assert "No field '9' in devices" in result.output
+
+
+@responses.activate
 def test_json_flag_prints_raw_json(runner: CliRunner) -> None:
     responses.add(
         responses.GET,

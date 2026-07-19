@@ -57,6 +57,31 @@ olh --base-url http://192.168.1.50:27003 devices list   # a non-local instance
 
 `--base-url` also reads from the `OPENLINKHUB_URL` environment variable.
 
+### Drilling into complex data
+
+Complex values are never dumped inline. List commands summarize nested structure to a
+count (`{...} (44 fields)`), get commands render each complex field as its own table one
+level deep, and every get command takes an optional PATH that drills further — one key
+per segment, matched case-insensitively:
+
+```bash
+olh led get <serial>                        # kv summary + one table row per channel
+olh led get <serial> devices                # just the channels table
+olh led get <serial> devices 1              # channel 1: LED count, pump/aio/fan flags
+olh led get <serial> devices 1 channels     # per-LED color table (44 rows on an AIO)
+olh led get <serial> devices 1 channels 0   # one LED's red/green/blue/Hex
+olh devices get <serial> userProfiles       # the settings `devices list` omits
+olh color get <serial> profiles rainbow     # one RGB effect's definition
+olh temperatures get Quiet points           # a temperature profile's curve points
+```
+
+A wrong segment errors with the fields actually available at that level. `-j`/`-y` emit
+just the selected subtree, so drill paths compose with jq:
+
+```bash
+olh -j led get <serial> devices 1 channels | jq 'map(.Hex) | unique'
+```
+
 ## Development
 
 ```bash
