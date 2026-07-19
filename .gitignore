@@ -1,0 +1,16 @@
+__pycache__/
+*.py[oc]
+.venv/
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+*.egg-info/
+dist/
+build/
+
+# Local Claude Code session settings, not project source
+.claude/
+
+# Project instructions for Claude Code, not published upstream
+CLAUDE.md
