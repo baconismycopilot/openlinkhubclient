@@ -1,3 +1,5 @@
+from typing import Any
+
 import click
 
 from olh.context import CliContext
@@ -19,15 +21,84 @@ def all_data(obj: CliContext) -> None:
 @click.pass_obj
 def list_devices(obj: CliContext) -> None:
     """List all devices (GET /api/devices/)."""
-    obj.render(obj.client.get("/api/devices/"), key="devices")
+    response = obj.client.get("/api/devices/")
+    if obj.output_format == "table":
+        response = _with_channel_summaries(response)
+    obj.render(response, key="devices")
+
+
+def _with_channel_summaries(response: Any) -> Any:
+    """Add a synthesized `channels` column ({channelId: "label (description)"})
+    next to each device's GetDevice blob, and reduce the GetDevice cell to its
+    string-valued keys (manufacturer/product/serial/firmware/...) — the
+    structured settings (devices map, profiles, flags) are viewable via
+    `devices get <id> [KEY]` instead. Table mode only — -j/-y stay the raw
+    envelope."""
+    devices_map = response.get("devices") if isinstance(response, dict) else None
+    if not isinstance(devices_map, dict):
+        return response
+    enriched = {}
+    for serial, entry in devices_map.items():
+        if isinstance(entry, dict):
+            entry = _insert_before(entry, "GetDevice", "channels", _channel_summary(entry))
+            get_device = entry.get("GetDevice")
+            if isinstance(get_device, dict):
+                strings_only = {k: v for k, v in get_device.items() if isinstance(v, str)}
+                entry["GetDevice"] = strings_only or None
+        enriched[serial] = entry
+    return {**response, "devices": enriched}
+
+
+def _channel_summary(entry: dict[str, Any]) -> dict[int, str] | None:
+    get_device = entry.get("GetDevice")
+    subs = get_device.get("devices") if isinstance(get_device, dict) else None
+    if not isinstance(subs, dict):
+        return None
+    summary = {}
+    for sub in subs.values():
+        if not isinstance(sub, dict) or "channelId" not in sub:
+            continue
+        label = str(sub.get("label") or sub.get("name") or "")
+        description = sub.get("description")
+        summary[sub["channelId"]] = f"{label} ({description})" if description else label
+    return summary or None
+
+
+def _insert_before(entry: dict[str, Any], key: str, new_key: str, value: Any) -> dict[str, Any]:
+    out: dict[str, Any] = {}
+    for existing_key, existing_value in entry.items():
+        if existing_key == key:
+            out[new_key] = value
+        out[existing_key] = existing_value
+    out.setdefault(new_key, value)
+    return out
 
 
 @devices.command("get")
 @click.argument("device_id")
+@click.argument("key", required=False)
 @click.pass_obj
-def get_device(obj: CliContext, device_id: str) -> None:
-    """Show one device (GET /api/devices/<device_id>)."""
-    obj.render(obj.client.get(f"/api/devices/{device_id}"), key="device")
+def get_device(obj: CliContext, device_id: str, key: str | None) -> None:
+    """Show one device (GET /api/devices/<device_id>).
+
+    KEY drills into a single field of the payload — the structured settings
+    the `devices list` table omits (e.g. `devices`, `userProfiles`) — and
+    renders just that subtree (-j/-y emit it alone, jq-ready).
+    """
+    response = obj.client.get(f"/api/devices/{device_id}")
+    if key is None:
+        obj.render(response, key="device")
+        return
+    device = response.get("device") if isinstance(response, dict) else None
+    if not isinstance(device, dict):
+        raise click.UsageError(f"Device {device_id!r} returned no payload to drill into.")
+    for field, value in device.items():
+        if field.casefold() == key.casefold():
+            obj.render(value)
+            return
+    raise click.UsageError(
+        f"No field {key!r} on device {device_id}. Available: {', '.join(device)}."
+    )
 
 
 @devices.command("set-position")
