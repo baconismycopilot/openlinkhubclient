@@ -170,6 +170,23 @@ def test_devices_get_bad_deep_segment_names_its_location(runner: CliRunner) -> N
 
 
 @responses.activate
+def test_devices_get_path_falls_back_to_envelope_without_key(runner: CliRunner) -> None:
+    """When the envelope lacks the expected payload key, drilling matches the
+    no-PATH fallback (render the whole response) instead of erroring — what's
+    visible on screen must also be drillable."""
+    responses.add(
+        responses.GET,
+        f"{BASE_URL}/api/devices/HUBSERIAL",
+        json={"code": 200, "topLevel": {"x": 1}},
+    )
+
+    result = runner.invoke(cli, ["-j", "devices", "get", "HUBSERIAL", "topLevel"])
+
+    assert result.exit_code == 0
+    assert '"x": 1' in result.output
+
+
+@responses.activate
 def test_json_flag_prints_raw_json(runner: CliRunner) -> None:
     responses.add(
         responses.GET,

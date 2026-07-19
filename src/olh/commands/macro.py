@@ -1,6 +1,6 @@
 import click
 
-from olh.commands._shared import render_subtree, yes_option
+from olh.commands._shared import path_argument, render_subtree, yes_option
 from olh.context import CliContext
 from olh.output import confirm_or_abort
 
@@ -19,7 +19,7 @@ def list_macros(obj: CliContext) -> None:
 
 @macro.command("get")
 @click.argument("macro_id", type=int)
-@click.argument("path", nargs=-1)
+@path_argument
 @click.pass_obj
 def get_macro(obj: CliContext, macro_id: int, path: tuple[str, ...]) -> None:
     """GET /api/macro/<macro_id>.

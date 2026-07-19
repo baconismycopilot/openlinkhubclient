@@ -1,6 +1,6 @@
 import click
 
-from olh.commands._shared import render_subtree
+from olh.commands._shared import path_argument, render_subtree
 from olh.context import CliContext
 
 
@@ -18,7 +18,7 @@ def list_led(obj: CliContext) -> None:
 
 @led.command("get")
 @click.argument("device_id")
-@click.argument("path", nargs=-1)
+@path_argument
 @click.pass_obj
 def get_led(obj: CliContext, device_id: str, path: tuple[str, ...]) -> None:
     """GET /api/led/<device_id>.

@@ -2,7 +2,7 @@ from typing import Any
 
 import click
 
-from olh.commands._shared import drill
+from olh.commands._shared import path_argument, render_subtree
 from olh.context import CliContext
 
 
@@ -12,10 +12,15 @@ def devices() -> None:
 
 
 @devices.command("all")
+@path_argument
 @click.pass_obj
-def all_data(obj: CliContext) -> None:
-    """Show everything OpenLinkHub knows about (GET /api/)."""
-    obj.render(obj.client.get("/api/"), key="device")
+def all_data(obj: CliContext, path: tuple[str, ...]) -> None:
+    """Show everything OpenLinkHub knows about (GET /api/).
+
+    PATH drills into the payload one key at a time (case-insensitive), e.g.
+    `olh devices all <serial> GetDevice`.
+    """
+    render_subtree(obj, obj.client.get("/api/"), path, key="device")
 
 
 @devices.command("list")
@@ -77,7 +82,7 @@ def _insert_before(entry: dict[str, Any], key: str, new_key: str, value: Any) ->
 
 @devices.command("get")
 @click.argument("device_id")
-@click.argument("path", nargs=-1)
+@path_argument
 @click.pass_obj
 def get_device(obj: CliContext, device_id: str, path: tuple[str, ...]) -> None:
     """Show one device (GET /api/devices/<device_id>).
@@ -87,14 +92,7 @@ def get_device(obj: CliContext, device_id: str, path: tuple[str, ...]) -> None:
     `devices get <id> devices 1` — and renders just that subtree (-j/-y emit
     it alone, jq-ready).
     """
-    response = obj.client.get(f"/api/devices/{device_id}")
-    if not path:
-        obj.render(response, key="device")
-        return
-    device = response.get("device") if isinstance(response, dict) else None
-    if not isinstance(device, dict):
-        raise click.UsageError(f"Device {device_id!r} returned no payload to drill into.")
-    obj.render(drill(device, path))
+    render_subtree(obj, obj.client.get(f"/api/devices/{device_id}"), path, key="device")
 
 
 @devices.command("set-position")

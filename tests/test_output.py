@@ -108,7 +108,7 @@ def test_render_kv_defers_deep_fields_to_subtables(captured_console: Console) ->
     text = _text(captured_console)
     assert "see 'devices' table below" in text
     assert "44" in text  # sub-table renders the devices rows
-    assert "(1 fields)" in text  # ...with *their* deep cells summarized
+    assert "(1 field)" in text  # ...with *their* deep cells summarized
     assert "red: 0" not in text  # per-LED detail needs a PATH drill
 
 
@@ -118,6 +118,58 @@ def test_render_kv_keeps_flat_dict_flattened(captured_console: Console) -> None:
     text = _text(captured_console)
     assert "defaultColor.red" in text
     assert "255" in text
+
+
+def test_render_kv_shows_empty_dict_fields(captured_console: Console) -> None:
+    """An empty dict must render as a `{}` row, not silently vanish (the
+    flatten loop over {} adds no rows) — same 'silent blank output' bug class
+    as the empty-payload case."""
+    output.render({"data": {"name": "x", "userProfiles": {}, "tags": []}}, key="data")
+    text = _text(captured_console)
+    assert "userProfiles" in text
+    assert "tags" in text
+
+
+def test_render_deferred_mixed_dict_is_bounded(captured_console: Console) -> None:
+    """A deferred mixed dict (scalars alongside sub-dicts) renders one kv
+    sub-table whose deep values collapse to counts — no third-level tables,
+    no full-depth recursion."""
+    response = {
+        "data": {
+            "serial": "HUBSERIAL",
+            "devices": {
+                "meta": "scalar",
+                "1": {"channels": {"0": {"red": 1}}},
+            },
+        }
+    }
+    output.render(response, key="data")
+    text = _text(captured_console)
+    assert "see 'devices' table below" in text
+    assert "meta" in text
+    assert "(1 field)" in text  # the "1" entry's deep value, as a count
+    assert "red: 1" not in text  # depth 3 is drill territory
+
+
+def test_render_deferred_irregular_list_is_summarized(captured_console: Console) -> None:
+    """A deferred deep list that isn't all-dicts must not fall back to a full
+    inline YAML dump — each item renders as a (possibly summarized) cell."""
+    output.render({"data": {"matrix": [[1, 2], [{"a": {"b": 1}}, 3]]}}, key="data")
+    text = _text(captured_console)
+    assert "see 'matrix' table below" in text
+    assert "- 1" in text  # flat sub-list rendered as YAML
+    assert "(2 items)" in text  # deep sub-list summarized to a count
+    assert "b: 1" not in text
+
+
+def test_markup_like_text_renders_literally(captured_console: Console) -> None:
+    """API/user strings (labels, field names) containing Rich-markup-shaped
+    text must render literally, not crash with MarkupError or restyle."""
+    output.print_table([{"channels": {1: "Fan [/x] weird"}, "[red]label": "[/bold]oops"}])
+    output.print_kv({"[/bold]weird": {"a": {"b": 1}}, "note": "[dim]x[/dim]"})
+    text = _text(captured_console)
+    assert "[/x]" in text
+    assert "oops" in text
 
 
 def test_print_ack_success_is_styled_green(captured_console: Console) -> None:

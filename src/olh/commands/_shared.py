@@ -42,40 +42,61 @@ def rgb_options[F: Callable[..., Any]](f: F) -> F:
     return f
 
 
+def path_argument[F: Callable[..., Any]](f: F) -> F:
+    """The variadic PATH argument every drill-capable get command takes."""
+    return click.argument("path", nargs=-1)(f)
+
+
 def drill(payload: Any, path: tuple[str, ...]) -> Any:
-    """Walk PATH segments into a payload one level at a time: dict keys are
-    matched case-insensitively (the API mixes casings and uses numeric-string
-    keys), list items by index. Complex values are never rendered inline, so
-    this is how a get command reaches deeper structure."""
+    """Walk PATH segments into a payload one level at a time: dict keys by
+    exact match first, then case-insensitively (the API mixes casings and
+    uses numeric-string keys) — erroring if the fold is ambiguous — and list
+    items by index. Complex values are never rendered inline, so this is how
+    a get command reaches deeper structure."""
+
+    def where(depth: int) -> str:
+        return " -> ".join(path[:depth]) or "the payload"
+
     node = payload
     for depth, segment in enumerate(path):
-        where = " -> ".join(path[:depth]) or "the payload"
         if isinstance(node, dict):
-            match = next((k for k in node if str(k).casefold() == segment.casefold()), None)
-            if match is None:
+            if segment in node:
+                node = node[segment]
+                continue
+            target = segment.casefold()
+            matches = [k for k in node if str(k).casefold() == target]
+            if not matches:
                 available = ", ".join(str(k) for k in node)
-                raise click.UsageError(f"No field {segment!r} in {where}. Available: {available}.")
-            node = node[match]
+                raise click.UsageError(
+                    f"No field {segment!r} in {where(depth)}. Available: {available}."
+                )
+            if len(matches) > 1:
+                candidates = ", ".join(repr(str(k)) for k in matches)
+                raise click.UsageError(
+                    f"{segment!r} is ambiguous in {where(depth)}: matches {candidates}."
+                )
+            node = node[matches[0]]
         elif isinstance(node, list):
             try:
                 node = node[int(segment)]
             except (ValueError, IndexError):
                 raise click.UsageError(
-                    f"{where} is a list of {len(node)} items; {segment!r} is not a valid index."
+                    f"{where(depth)} is a list of {len(node)} items; "
+                    f"{segment!r} is not a valid index."
                 ) from None
         else:
-            raise click.UsageError(f"{where} is {node!r}; cannot drill into {segment!r}.")
+            raise click.UsageError(f"{where(depth)} is {node!r}; cannot drill into {segment!r}.")
     return node
 
 
 def render_subtree(obj: CliContext, response: Any, path: tuple[str, ...], *, key: str) -> None:
-    """Shared body of the single-resource get commands: with no PATH, render
+    """Shared body of the drill-capable get commands: with no PATH, render
     the envelope's payload; with one, drill into it and render (and -j/-y
-    emit) just that subtree, jq-ready."""
+    emit) just that subtree, jq-ready. Mirrors render()'s envelope handling:
+    the payload lives under `key` when present, else the whole response —
+    so anything visible without a PATH is also drillable with one."""
     if not path:
         obj.render(response, key=key)
         return
-    payload = response.get(key) if isinstance(response, dict) else None
-    if not isinstance(payload, dict | list):
-        raise click.UsageError("The response has no payload to drill into.")
+    payload = response[key] if isinstance(response, dict) and key in response else response
     obj.render(drill(payload, path))
