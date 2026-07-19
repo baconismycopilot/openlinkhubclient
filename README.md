@@ -1,5 +1,6 @@
 # openlinkhubclient
 
+[![CI](https://github.com/baconismycopilot/openlinkhubclient/actions/workflows/ci.yml/badge.svg)](https://github.com/baconismycopilot/openlinkhubclient/actions/workflows/ci.yml)
 [![License: GPL-3.0-only](https://img.shields.io/github/license/baconismycopilot/openlinkhubclient)](LICENSE)
 
 A command-line client for [OpenLinkHub](https://github.com/jurkovic-nikola/OpenLinkHub)'s REST API — control Corsair iCUE LINK devices (AIOs, fans, hubs, keyboards, mice, headsets) from the terminal instead of only the web UI.
