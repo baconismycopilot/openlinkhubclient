@@ -1,5 +1,6 @@
 import click
 
+from olh.commands._shared import all_option, path_argument, render_subtree
 from olh.context import CliContext
 
 
@@ -17,10 +18,18 @@ def list_colors(obj: CliContext) -> None:
 
 @color.command("get")
 @click.argument("device_id")
+@path_argument
+@all_option
 @click.pass_obj
-def get_color(obj: CliContext, device_id: str) -> None:
-    """GET /api/color/<device_id>."""
-    obj.render(obj.client.get(f"/api/color/{device_id}"), key="data")
+def get_color(obj: CliContext, device_id: str, path: tuple[str, ...], show_all: bool) -> None:
+    """GET /api/color/<device_id>.
+
+    PATH drills into the payload one key at a time (case-insensitive), e.g.
+    `olh color get <id> profiles rainbow`; --all renders every nested table.
+    """
+    render_subtree(
+        obj, obj.client.get(f"/api/color/{device_id}"), path, key="data", expand=show_all
+    )
 
 
 @color.command("set")

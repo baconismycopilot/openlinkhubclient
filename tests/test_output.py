@@ -58,7 +58,9 @@ def test_render_scalar_value(captured_console: Console) -> None:
     assert "45.2" in _text(captured_console)
 
 
-def test_render_table_shows_full_nested_data(captured_console: Console) -> None:
+def test_render_table_summarizes_deep_nested_cells(captured_console: Console) -> None:
+    """List views collapse cells that nest further dicts/lists to a count —
+    the full structure belongs to the resource's `get` command."""
     response = {
         "devices": {
             "abc123": {
@@ -69,15 +71,143 @@ def test_render_table_shows_full_nested_data(captured_console: Console) -> None:
     }
     output.render(response, output_format="table", key="devices")
     text = _text(captured_console)
-    assert "rainbow" in text
-    assert "speed: 3" in text
-    assert "use -j/--json for detail" not in text
+    assert "(2 fields)" in text
+    assert "speed: 3" not in text
+
+
+def test_render_table_keeps_flat_nested_cells(captured_console: Console) -> None:
+    """A flat map of scalars (e.g. the channels column) stays fully rendered
+    in list views — only *deep* nesting is summarized."""
+    response = {
+        "devices": {
+            "abc123": {
+                "Product": "iCUE LINK System Hub",
+                "channels": {1: "Pump (AIO)", 2: "Front Fan (Fan)"},
+            }
+        }
+    }
+    output.render(response, output_format="table", key="devices")
+    text = _text(captured_console)
+    assert "Pump (AIO)" in text
+    assert "(2 fields)" not in text
+
+
+def test_render_kv_hides_deep_fields_by_default(captured_console: Console) -> None:
+    """Without --all, a deep field in a kv view collapses to a count plus a
+    hint naming the PATH that shows just that table — no sub-table renders."""
+    response = {
+        "data": {
+            "serial": "HUBSERIAL",
+            "devices": {
+                "1": {"ledChannels": 44, "pump": True, "channels": {"0": {"red": 0}}},
+            },
+        }
+    }
+    output.render(response, output_format="table", key="data")
+    text = _text(captured_console)
+    assert "(1 field)" in text  # the count for the devices map
+    assert "add 'devices' to the command, or --all" in text
+    assert "ledChannels" not in text  # the sub-table itself does not render
+    assert "see 'devices' table below" not in text
+
+
+def test_render_kv_expand_defers_deep_fields_to_subtables(captured_console: Console) -> None:
+    """With expand (--all), a mixed dict still never renders deep values
+    inline: the kv block gets a `see table below` marker and the deep field
+    renders as its own titled table, whose deeper cells summarize again."""
+    response = {
+        "data": {
+            "serial": "HUBSERIAL",
+            "devices": {
+                "1": {"ledChannels": 44, "pump": True, "channels": {"0": {"red": 0}}},
+            },
+        }
+    }
+    output.render(response, output_format="table", key="data", expand=True)
+    text = _text(captured_console)
+    assert "see 'devices' table below" in text
+    assert "44" in text  # sub-table renders the devices rows
+    assert "(1 field)" in text  # ...with *their* deep cells summarized
+    assert "red: 0" not in text  # per-LED detail needs a PATH drill
+
+
+def test_render_kv_keeps_flat_dict_flattened(captured_console: Console) -> None:
+    response = {"data": {"name": "x", "defaultColor": {"red": 255, "green": 0}}}
+    output.render(response, output_format="table", key="data")
+    text = _text(captured_console)
+    assert "defaultColor.red" in text
+    assert "255" in text
+
+
+def test_render_kv_shows_empty_dict_fields(captured_console: Console) -> None:
+    """An empty dict must render as a `{}` row, not silently vanish (the
+    flatten loop over {} adds no rows) — same 'silent blank output' bug class
+    as the empty-payload case."""
+    output.render({"data": {"name": "x", "userProfiles": {}, "tags": []}}, key="data")
+    text = _text(captured_console)
+    assert "userProfiles" in text
+    assert "tags" in text
+
+
+def test_render_deferred_mixed_dict_is_bounded(captured_console: Console) -> None:
+    """A deferred mixed dict (scalars alongside sub-dicts) renders one kv
+    sub-table whose deep values collapse to counts — no third-level tables,
+    no full-depth recursion."""
+    response = {
+        "data": {
+            "serial": "HUBSERIAL",
+            "devices": {
+                "meta": "scalar",
+                "1": {"channels": {"0": {"red": 1}}},
+            },
+        }
+    }
+    output.render(response, key="data", expand=True)
+    text = _text(captured_console)
+    assert "see 'devices' table below" in text
+    assert "meta" in text
+    assert "(1 field)" in text  # the "1" entry's deep value, as a count
+    assert "red: 1" not in text  # depth 3 is drill territory
+
+
+def test_render_deferred_irregular_list_is_summarized(captured_console: Console) -> None:
+    """A deferred deep list that isn't all-dicts must not fall back to a full
+    inline YAML dump — each item renders as a (possibly summarized) cell."""
+    output.render({"data": {"matrix": [[1, 2], [{"a": {"b": 1}}, 3]]}}, key="data", expand=True)
+    text = _text(captured_console)
+    assert "see 'matrix' table below" in text
+    assert "- 1" in text  # flat sub-list rendered as YAML
+    assert "(2 items)" in text  # deep sub-list summarized to a count
+    assert "b: 1" not in text
+
+
+def test_markup_like_text_renders_literally(captured_console: Console) -> None:
+    """API/user strings (labels, field names) containing Rich-markup-shaped
+    text must render literally, not crash with MarkupError or restyle."""
+    output.print_table([{"channels": {1: "Fan [/x] weird"}, "[red]label": "[/bold]oops"}])
+    output.print_kv({"[/bold]weird": {"a": {"b": 1}}, "note": "[dim]x[/dim]"})
+    text = _text(captured_console)
+    assert "[/x]" in text
+    assert "oops" in text
 
 
 def test_print_ack_success_is_styled_green(captured_console: Console) -> None:
     output.print_ack({"code": 200, "status": 1})
     text = _text(captured_console)
     assert "code=200" in text
+
+
+def test_print_ack_status_zero_is_a_failure(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The live server reports many failures as code 200 with status 0 (e.g.
+    "non-existing speed profile") — those must not render in success green."""
+    buffer = io.StringIO()
+    styled_console = Console(file=buffer, force_terminal=True, width=200)
+    monkeypatch.setattr(output, "console", styled_console)
+    output.print_ack({"code": 200, "status": 0, "message": "Non-existing speed profile"})
+    text = buffer.getvalue()
+    assert "Non-existing speed profile" in text
+    assert "\x1b[31m" in text  # red, not green
+    assert "\x1b[32m" not in text
 
 
 def test_confirm_or_abort_yes_skips_prompt(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -1,6 +1,9 @@
+import pytest
 import responses
 from click.testing import CliRunner
+from rich.console import Console
 
+from olh import output
 from olh.cli import cli
 
 BASE_URL = "http://127.0.0.1:27003"
@@ -25,6 +28,65 @@ def test_devices_list_renders_table(runner: CliRunner) -> None:
     assert "iCUE LINK System Hub" in result.output
 
 
+_DEVICES_WITH_CHANNELS = {
+    "code": 200,
+    "status": 0,
+    "devices": {
+        "HUBSERIAL": {
+            "Product": "iCUE LINK System Hub",
+            "Serial": "HUBSERIAL",
+            "GetDevice": {
+                "Debug": False,
+                "serial": "HUBSERIAL",
+                "firmware": "2.11.517",
+                "aio": False,
+                "brightness": 3,
+                "devices": {
+                    "1": {"channelId": 1, "label": "GPU Intake 1", "description": "Fan"},
+                    "2": {"channelId": 2, "label": "H150i Pump", "description": "AIO"},
+                },
+                "userProfiles": {"Default": {}, "Gaming": {}},
+            },
+        },
+        "MOUSESERIAL": {"Product": "Mouse", "Serial": "MOUSESERIAL", "GetDevice": None},
+    },
+}
+
+
+@responses.activate
+def test_devices_list_table_shows_channels_column(
+    runner: CliRunner, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Wide console so the channels cell doesn't fold mid-string at the
+    # CliRunner's default 80-column width.
+    monkeypatch.setattr(output, "console", Console(force_terminal=False, width=200))
+    responses.add(responses.GET, f"{BASE_URL}/api/devices/", json=_DEVICES_WITH_CHANNELS)
+
+    result = runner.invoke(cli, ["devices", "list"])
+
+    assert result.exit_code == 0
+    assert "channels" in result.output
+    assert "GPU Intake 1 (Fan)" in result.output
+    assert "H150i Pump (AIO)" in result.output
+    # The GetDevice cell keeps only string-valued keys; the structured/flag
+    # fields are reachable via `devices get <id> [KEY]` instead.
+    assert "serial: HUBSERIAL" in result.output
+    assert "firmware: 2.11.517" in result.output
+    for hidden in ("channelId", "Debug", "aio", "brightness", "userProfiles"):
+        assert hidden not in result.output
+
+
+@responses.activate
+def test_devices_list_json_stays_raw_envelope(runner: CliRunner) -> None:
+    responses.add(responses.GET, f"{BASE_URL}/api/devices/", json=_DEVICES_WITH_CHANNELS)
+
+    result = runner.invoke(cli, ["-j", "devices", "list"])
+
+    assert result.exit_code == 0
+    assert '"channels"' not in result.output
+    assert '"channelId"' in result.output
+
+
 @responses.activate
 def test_devices_get_renders_single_device(runner: CliRunner) -> None:
     responses.add(
@@ -37,6 +99,123 @@ def test_devices_get_renders_single_device(runner: CliRunner) -> None:
 
     assert result.exit_code == 0
     assert "iCUE LINK System Hub" in result.output
+
+
+_SINGLE_DEVICE = {
+    "code": 200,
+    "status": 0,
+    "device": {
+        "serial": "HUBSERIAL",
+        "aio": False,
+        "devices": {
+            "1": {"channelId": 1, "label": "GPU Intake 1", "description": "Fan"},
+        },
+        "userProfiles": {"Default": {}, "Gaming": {}},
+    },
+}
+
+
+@responses.activate
+def test_devices_get_hides_subtables_by_default(
+    runner: CliRunner, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Deep fields render as a count plus a PATH/--all hint; their tables
+    only appear when named as a PATH segment or under --all."""
+    monkeypatch.setattr(output, "console", Console(force_terminal=False, width=200))
+    responses.add(responses.GET, f"{BASE_URL}/api/devices/HUBSERIAL", json=_SINGLE_DEVICE)
+
+    result = runner.invoke(cli, ["devices", "get", "HUBSERIAL"])
+
+    assert result.exit_code == 0
+    assert "add 'devices' to the command, or --all" in result.output
+    assert "add 'userProfiles' to the command, or --all" in result.output
+    assert "GPU Intake 1" not in result.output  # the devices sub-table did not render
+
+
+@responses.activate
+def test_devices_get_all_flag_renders_every_subtable(
+    runner: CliRunner, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(output, "console", Console(force_terminal=False, width=200))
+    responses.add(responses.GET, f"{BASE_URL}/api/devices/HUBSERIAL", json=_SINGLE_DEVICE)
+
+    result = runner.invoke(cli, ["devices", "get", "HUBSERIAL", "--all"])
+
+    assert result.exit_code == 0
+    assert "see 'devices' table below" in result.output
+    assert "GPU Intake 1" in result.output  # devices sub-table rendered
+    assert "Gaming" in result.output  # userProfiles sub-table rendered
+
+
+@responses.activate
+def test_devices_get_key_drills_into_field(runner: CliRunner) -> None:
+    responses.add(responses.GET, f"{BASE_URL}/api/devices/HUBSERIAL", json=_SINGLE_DEVICE)
+
+    result = runner.invoke(cli, ["devices", "get", "HUBSERIAL", "devices"])
+
+    assert result.exit_code == 0
+    assert "GPU Intake 1" in result.output
+    assert "userProfiles" not in result.output
+
+
+@responses.activate
+def test_devices_get_key_is_case_insensitive_and_json_emits_subtree(runner: CliRunner) -> None:
+    responses.add(responses.GET, f"{BASE_URL}/api/devices/HUBSERIAL", json=_SINGLE_DEVICE)
+
+    result = runner.invoke(cli, ["-j", "devices", "get", "HUBSERIAL", "USERPROFILES"])
+
+    assert result.exit_code == 0
+    assert '"Gaming"' in result.output
+    assert '"code"' not in result.output
+
+
+@responses.activate
+def test_devices_get_unknown_key_lists_available_fields(runner: CliRunner) -> None:
+    responses.add(responses.GET, f"{BASE_URL}/api/devices/HUBSERIAL", json=_SINGLE_DEVICE)
+
+    result = runner.invoke(cli, ["devices", "get", "HUBSERIAL", "nope"])
+
+    assert result.exit_code != 0
+    assert "No field 'nope'" in result.output
+    assert "userProfiles" in result.output
+
+
+@responses.activate
+def test_devices_get_path_drills_multiple_levels(runner: CliRunner) -> None:
+    responses.add(responses.GET, f"{BASE_URL}/api/devices/HUBSERIAL", json=_SINGLE_DEVICE)
+
+    result = runner.invoke(cli, ["-j", "devices", "get", "HUBSERIAL", "devices", "1", "label"])
+
+    assert result.exit_code == 0
+    assert "GPU Intake 1" in result.output
+    assert "channelId" not in result.output
+
+
+@responses.activate
+def test_devices_get_bad_deep_segment_names_its_location(runner: CliRunner) -> None:
+    responses.add(responses.GET, f"{BASE_URL}/api/devices/HUBSERIAL", json=_SINGLE_DEVICE)
+
+    result = runner.invoke(cli, ["devices", "get", "HUBSERIAL", "devices", "9"])
+
+    assert result.exit_code != 0
+    assert "No field '9' in devices" in result.output
+
+
+@responses.activate
+def test_devices_get_path_falls_back_to_envelope_without_key(runner: CliRunner) -> None:
+    """When the envelope lacks the expected payload key, drilling matches the
+    no-PATH fallback (render the whole response) instead of erroring — what's
+    visible on screen must also be drillable."""
+    responses.add(
+        responses.GET,
+        f"{BASE_URL}/api/devices/HUBSERIAL",
+        json={"code": 200, "topLevel": {"x": 1}},
+    )
+
+    result = runner.invoke(cli, ["-j", "devices", "get", "HUBSERIAL", "topLevel"])
+
+    assert result.exit_code == 0
+    assert '"x": 1' in result.output
 
 
 @responses.activate
