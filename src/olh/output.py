@@ -99,6 +99,17 @@ def print_yaml(data: Any) -> None:
 
 _SCALAR_COLUMN_MAX = 24
 _NESTED_COLUMN_MAX = 50
+_ATOMIC_COLUMN_MAX = 44
+
+
+def _atomic_width(rendered: str) -> int:
+    """Display width of a cell with no whitespace to wrap at — a serial,
+    device id, or hex string. Everything else scores 0: prose folds readably
+    at word boundaries, and YAML blocks and count strings already contain
+    whitespace, so none of them need the wider cap."""
+    if not rendered or any(char.isspace() for char in rendered):
+        return 0
+    return len(rendered)
 
 
 def print_table(rows: list[dict[str, Any]], title: str | None = None) -> None:
@@ -107,18 +118,42 @@ def print_table(rows: list[dict[str, Any]], title: str | None = None) -> None:
         return
 
     columns = list(dict.fromkeys(key for row in rows for key in row))
-    table = Table(title=escape(title) if title else None, show_lines=True)
-    for column in columns:
+    cells = [[_cell(row.get(column)) for column in columns] for row in rows]
+
+    caps: list[int] = []
+    for index, column in enumerate(columns):
         # Cap every column's width so one unbreakable scalar (a 40-char
         # serial/id) can't force Rich's shrink pass to crush *other* columns
         # down to unreadable single characters. Only flat nested values earn
         # the wider cap — they render as multi-line YAML blocks; deep values
         # are short count strings and fit the scalar cap.
-        has_block = any(_is_yaml_block(row.get(column)) for row in rows)
-        cap = _NESTED_COLUMN_MAX if has_block else _SCALAR_COLUMN_MAX
-        table.add_column(escape(str(column)), overflow="fold", max_width=cap)
-    for row in rows:
-        table.add_row(*(_cell(row.get(column)) for column in columns))
+        if any(_is_yaml_block(row.get(column)) for row in rows):
+            caps.append(_NESTED_COLUMN_MAX)
+            continue
+        # ...but a cap *below* an unbreakable token's own width folds it
+        # mid-token in every terminal, however wide — a 32-char serial split
+        # across two lines at width 220. Those columns size to their content
+        # instead (still bounded, and still narrower than the nested cap, so
+        # the shrink pass keeps targeting YAML first).
+        atomic = min(
+            max((_atomic_width(row[index]) for row in cells), default=0), _ATOMIC_COLUMN_MAX
+        )
+        caps.append(max(_SCALAR_COLUMN_MAX, atomic))
+
+    # Deliberately *not* pinning these columns to their full width with
+    # min_width: when a table has enough columns to overflow the terminal
+    # anyway (devices list has 11, two of them 32-char ids), forcing the ids
+    # whole makes Rich drop whole columns off the right edge instead. A folded
+    # id is recoverable by eye; a missing field isn't. Rich's own measurement
+    # can't predict that either — a GetDevice cell's YAML embeds the 32-char
+    # serial, so that column's true minimum is far wider than its content
+    # suggests. Wide tables stay Rich's problem to shrink; -j/-y is the answer
+    # when a terminal genuinely can't fit them.
+    table = Table(title=escape(title) if title else None, show_lines=True)
+    for index, column in enumerate(columns):
+        table.add_column(escape(str(column)), overflow="fold", max_width=caps[index])
+    for row in cells:
+        table.add_row(*row)
     console.print(table)
 
 
@@ -160,18 +195,31 @@ def print_kv(
         _render_value(value, title=field, defer=False)
 
 
-def print_ack(response: Any) -> None:
+def ack_ok(response: Any) -> bool:
+    """Whether a write endpoint's envelope reports success.
+
+    The live server reports many failures as code 200 with status 0 (e.g.
+    "non-existing speed profile"), which the client doesn't raise on — only a
+    status-1 envelope is an actual success. A non-dict response carries no
+    failure signal, so it counts as one."""
+    if not isinstance(response, dict):
+        return True
+    code = response.get("code")
+    return isinstance(code, int) and code < 400 and response.get("status") != 0
+
+
+def print_ack(response: Any) -> bool:
+    """Print a write command's one-line acknowledgement, and report whether it
+    succeeded — so a caller can gate a follow-up call (and its own exit code)
+    on it instead of charging ahead after a failed write."""
+    ok = ack_ok(response)
     if not isinstance(response, dict):
         console.print(escape(str(response)))
-        return
-    code = response.get("code")
-    # The live server reports many failures as code 200 with status 0 (e.g.
-    # "non-existing speed profile"), which the client doesn't raise on — only
-    # a status-1 envelope is an actual success.
-    ok = isinstance(code, int) and code < 400 and response.get("status") != 0
+        return ok
     style = "green" if ok else "red"
     message = response.get("message") or response.get("data") or ("OK" if ok else "Failed")
-    console.print(f"[{style}]{escape(str(message))}[/{style}] (code={code})")
+    console.print(f"[{style}]{escape(str(message))}[/{style}] (code={response.get('code')})")
+    return ok
 
 
 def confirm_or_abort(message: str, *, yes: bool) -> None:

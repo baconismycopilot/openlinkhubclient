@@ -210,6 +210,15 @@ def test_print_ack_status_zero_is_a_failure(monkeypatch: pytest.MonkeyPatch) -> 
     assert "\x1b[32m" not in text
 
 
+def test_print_ack_reports_whether_the_write_succeeded(captured_console: Console) -> None:
+    """Callers gate a follow-up call (and their exit code) on this, so the
+    return value has to track the same status-0 rule as the coloring."""
+    assert output.print_ack({"code": 200, "status": 1}) is True
+    assert output.print_ack({"code": 200, "status": 0, "message": "txtInvalidSpeed"}) is False
+    assert output.print_ack({"code": 500, "status": 1}) is False
+    assert output.ack_ok("some plain string") is True  # no failure signal to read
+
+
 def test_confirm_or_abort_yes_skips_prompt(monkeypatch: pytest.MonkeyPatch) -> None:
     def fail_if_called(*_args: object, **_kwargs: object) -> bool:
         raise AssertionError("click.confirm should not be called when yes=True")
@@ -227,3 +236,84 @@ def test_confirm_or_abort_declined_raises_abort(monkeypatch: pytest.MonkeyPatch)
 def test_confirm_or_abort_accepted_does_not_raise(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(click, "confirm", lambda *_a, **_k: True)
     output.confirm_or_abort("Delete it?", yes=False)
+
+
+# --- unbreakable ids stay on one line ------------------------------------
+#
+# A 32-char serial has no whitespace to wrap at, so folding it splits it
+# mid-token and it has to be reassembled by eye. The scalar column cap used to
+# be a flat 24, which forced that split in *every* terminal however wide.
+
+SERIAL = "09AD5AE1ACE4E156A6A5ED2927A5B068"
+
+
+def _console(width: int, monkeypatch: pytest.MonkeyPatch) -> Console:
+    buffer = io.StringIO()
+    test_console = Console(file=buffer, force_terminal=False, width=width)
+    monkeypatch.setattr(output, "console", test_console)
+    return test_console
+
+
+@pytest.mark.parametrize("width", [100, 160, 220])
+def test_serial_column_is_not_split_when_there_is_room(
+    width: int, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    console = _console(width, monkeypatch)
+    rows = [{"label": "Fan 1", "rgb": "static", "device": SERIAL}]
+
+    output.print_table(rows)
+
+    assert SERIAL in _text(console)
+
+
+def test_wrappable_text_keeps_the_tighter_cap(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Only whitespace-free cells earn the wider cap; prose folds at spaces
+    just fine, so a chatty column shouldn't get to hog the width."""
+    console = _console(200, monkeypatch)
+    prose = "a fairly long human readable description that should wrap at spaces"
+    rows = [{"note": prose, "device": SERIAL}]
+
+    output.print_table(rows)
+
+    text = _text(console)
+    assert SERIAL in text
+    # The prose column folded rather than running to its full 67 chars.
+    assert prose not in text
+
+
+def test_overlong_atomic_value_is_still_bounded(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The wider cap is a ceiling, not carte blanche — a pathological token
+    must not be allowed to run away with the whole table."""
+    console = _console(200, monkeypatch)
+    monster = "Z" * 300
+    rows = [{"blob": monster, "device": SERIAL}]
+
+    output.print_table(rows)
+
+    text = _text(console)
+    assert monster not in text
+    assert SERIAL in text  # ...and it didn't starve the serial either
+
+
+def test_wide_table_keeps_every_column(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Guard against 'fix' the split by pinning ids to full width: with enough
+    columns to overflow, that makes Rich drop columns off the right edge. A
+    folded id is recoverable; a missing field is not."""
+    console = _console(120, monkeypatch)
+    rows = [
+        {
+            "id": SERIAL,
+            "Serial": SERIAL,
+            "Product": "iCUE LINK System Hub",
+            "Firmware": "3.4.587",
+            "Hidden": False,
+            "DeviceType": 0,
+            "ProductId": 0,
+        }
+    ]
+
+    output.print_table(rows)
+
+    text = _text(console)
+    for column in ("id", "Serial", "Product", "Firmware", "Hidden", "DeviceType", "ProductId"):
+        assert column in text, f"column {column!r} was cropped out of the table"

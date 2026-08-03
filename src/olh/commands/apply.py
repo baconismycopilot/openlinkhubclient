@@ -1,8 +1,8 @@
 import click
 
 from olh.commands._resolve import iter_hub_devices, match_canonical
+from olh.commands._shared import exit_if_write_failed
 from olh.context import CliContext
-from olh.output import print_ack
 
 
 @click.command("apply")
@@ -45,4 +45,4 @@ def apply_profile(obj: CliContext, profile_name: str, device_id: str | None) -> 
         profile_name, candidates[target], "user profile", f" on device {target}"
     )
     payload = {"deviceId": target, "userProfileName": canonical}
-    print_ack(obj.client.post("/api/userProfile/change", json=payload))
+    exit_if_write_failed(obj.ack(obj.client.post("/api/userProfile/change", json=payload)))
