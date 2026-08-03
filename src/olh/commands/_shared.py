@@ -1,11 +1,12 @@
 """Small helpers shared across command modules: a JSON-string click type for
-nested payload fields (stages, colorZones, points, ...), a reusable
---yes/-y confirmation flag, an RGB triplet option group, and the PATH
-drill-down walker used by the single-resource get commands."""
+nested payload fields (stages, colorZones, points, ...), a hex/triplet color
+type, a reusable --yes/-y confirmation flag, an RGB triplet option group, and
+the PATH drill-down walker used by the single-resource get commands."""
 
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import Callable
 from typing import Any
 
@@ -27,6 +28,51 @@ class JsonParamType(click.ParamType):
 
 
 JSON = JsonParamType()
+
+
+_HEX_COLOR = re.compile(r"[0-9a-fA-F]{6}")
+
+
+# Named colors are deliberately not supported: the point of this type is an
+# unambiguous triplet, and a half-remembered CSS name list is a worse failure
+# mode than "give me six hex digits".
+class ColorParamType(click.ParamType):
+    """A color as `#rrggbb`, `rrggbb`, `#rgb`, or `r,g,b` -> the API's
+    {"red": .., "green": .., "blue": ..} object."""
+
+    name = "color"
+
+    def convert(self, value: Any, param: click.Parameter | None, ctx: click.Context | None) -> Any:
+        if isinstance(value, dict):
+            return value
+        text = str(value).strip()
+        if "," in text:
+            parts = [p.strip() for p in text.split(",")]
+            if len(parts) != 3:
+                self.fail(f"{value!r} needs exactly three comma-separated channels.", param, ctx)
+            try:
+                channels = [int(p) for p in parts]
+            except ValueError:
+                self.fail(f"{value!r} has a non-integer channel.", param, ctx)
+            if any(c < 0 or c > 255 for c in channels):
+                self.fail(f"{value!r} has a channel outside 0-255.", param, ctx)
+        else:
+            digits = text.removeprefix("#")
+            if len(digits) == 3:
+                digits = "".join(d * 2 for d in digits)
+            # Validate the whole string up front rather than leaning on
+            # int(..., 16) to reject the bad pairs: it also accepts signs and
+            # whitespace, so '#ff-00f' parses as a perfectly plausible color
+            # and the wrong one gets pushed to the hardware without a word.
+            if not _HEX_COLOR.fullmatch(digits):
+                self.fail(
+                    f"{value!r} is not a color: use '#rrggbb', '#rgb', or 'r,g,b'.", param, ctx
+                )
+            channels = [int(digits[i : i + 2], 16) for i in (0, 2, 4)]
+        return dict(zip(("red", "green", "blue"), channels, strict=True))
+
+
+COLOR = ColorParamType()
 
 
 def yes_option[F: Callable[..., Any]](f: F) -> F:
@@ -58,6 +104,21 @@ def all_option[F: Callable[..., Any]](f: F) -> F:
         default=False,
         help="Render every nested table below the main view (default: counts with a PATH hint).",
     )(f)
+
+
+def exit_if_write_failed(ok: bool) -> None:
+    """Exit 1 when a write command's ack reported failure.
+
+    Worth a helper because the failure it catches is invisible to the client:
+    the server reports plenty of rejections (a nonexistent speed profile, an
+    out-of-range RGB speed) as a `code: 200, status: 0` envelope rather than an
+    HTTP error, so nothing raises and a fanned-out write would otherwise report
+    success to `olh fan set ... && ...` after changing nothing. Commands that
+    write to several channels/devices at once ack each one, then pass the
+    accumulated verdict here — every write still gets attempted, exactly as
+    before; only the exit code changes."""
+    if not ok:
+        click.get_current_context().exit(1)
 
 
 def drill(payload: Any, path: tuple[str, ...]) -> Any:

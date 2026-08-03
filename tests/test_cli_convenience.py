@@ -104,6 +104,9 @@ COLOR_ENVELOPE = {
 }
 
 ACK = {"code": 200, "status": 1, "message": "Updated"}
+# How OpenLinkHub reports a rejected write: a 200 body with status 0, which the
+# client can't tell from a success at the HTTP layer.
+FAILED_ACK = {"code": 200, "status": 0, "message": "Non-existing speed profile"}
 
 
 def add_devices() -> None:
@@ -211,6 +214,37 @@ def test_fan_set_literal_channel_id(runner: CliRunner) -> None:
     assert result.exit_code == 0
     body = json.loads(responses.calls[1].request.body)
     assert body["channelId"] == 3
+
+
+@responses.activate
+def test_fan_set_failure_envelope_exits_nonzero(runner: CliRunner) -> None:
+    """A `status: 0` body is a rejected write with a 200 status line, so
+    nothing raises — without the explicit exit code `olh fan set ... && ...`
+    would treat a no-op as success."""
+    add_devices()
+    responses.add(responses.POST, f"{BASE_URL}/api/speed/manual", json=FAILED_ACK)
+
+    result = runner.invoke(cli, ["fan", "set", "pump", "80"])
+
+    assert result.exit_code == 1
+    assert "Non-existing speed profile" in result.output
+
+
+@responses.activate
+def test_fan_set_all_still_attempts_every_device_when_one_fails(runner: CliRunner) -> None:
+    """One rejected device must not abort the fan-out — every write is still
+    attempted, and only the exit code reflects the failure."""
+    add_devices()
+    responses.add(responses.GET, f"{BASE_URL}/api/temperatures/", json=TEMPERATURES_ENVELOPE)
+    responses.add(responses.POST, f"{BASE_URL}/api/speed", json=FAILED_ACK)
+    responses.add(responses.POST, f"{BASE_URL}/api/speed", json=ACK)
+
+    result = runner.invoke(cli, ["fan", "set", "all", "performance"])
+
+    assert result.exit_code == 1
+    posts = [c for c in responses.calls if c.request.method == "POST"]
+    assert len(posts) == 2
+    assert json.loads(posts[1].request.body)["deviceId"] == "HUB2SERIAL"
 
 
 # --- fan list / status ---
@@ -331,6 +365,26 @@ def test_light_brightness_device_option_targets_one(runner: CliRunner) -> None:
     assert body == {"deviceId": "HUB2SERIAL", "brightness": 40}
 
 
+@responses.activate
+def test_light_set_failure_envelope_exits_nonzero(runner: CliRunner) -> None:
+    add_devices()
+    responses.add(responses.GET, f"{BASE_URL}/api/color/", json=COLOR_ENVELOPE)
+    responses.add(responses.POST, f"{BASE_URL}/api/color", json=FAILED_ACK)
+
+    result = runner.invoke(cli, ["light", "set", "pump", "static"])
+
+    assert result.exit_code == 1
+
+
+@responses.activate
+def test_light_brightness_failure_envelope_exits_nonzero(runner: CliRunner) -> None:
+    responses.add(responses.POST, f"{BASE_URL}/api/brightness/gradual", json=FAILED_ACK)
+
+    result = runner.invoke(cli, ["light", "brightness", "40", "-d", "HUB2SERIAL"])
+
+    assert result.exit_code == 1
+
+
 # --- apply ---
 
 
@@ -344,6 +398,16 @@ def test_apply_auto_resolves_single_profile_device(runner: CliRunner) -> None:
     assert result.exit_code == 0
     body = json.loads(responses.calls[1].request.body)
     assert body == {"deviceId": "HUB1SERIAL", "userProfileName": "Gaming"}
+
+
+@responses.activate
+def test_apply_failure_envelope_exits_nonzero(runner: CliRunner) -> None:
+    add_devices()
+    responses.add(responses.POST, f"{BASE_URL}/api/userProfile/change", json=FAILED_ACK)
+
+    result = runner.invoke(cli, ["apply", "gaming"])
+
+    assert result.exit_code == 1
 
 
 @responses.activate

@@ -6,8 +6,8 @@ from olh.commands._resolve import (
     resolve_speed_profile,
     resolve_targets,
 )
+from olh.commands._shared import exit_if_write_failed
 from olh.context import CliContext
-from olh.output import print_ack
 
 
 @click.group("fan")
@@ -50,12 +50,14 @@ def set_fan(obj: CliContext, name: str, value: str) -> None:
     if not channels:
         raise click.UsageError("No speed-capable channels found on any device.")
     targets = resolve_targets(channels, name)
+    ok = True
     if duty is not None:
         for device_id, channel_id in targets:
             payload = {"deviceId": device_id, "channelId": channel_id, "value": duty}
-            print_ack(obj.client.post("/api/speed/manual", json=payload))
+            ok = obj.ack(obj.client.post("/api/speed/manual", json=payload)) and ok
     else:
         profile = resolve_speed_profile(obj.client, value)
         for device_id, channel_id in targets:
             payload = {"deviceId": device_id, "channelId": channel_id, "profile": profile}
-            print_ack(obj.client.post("/api/speed", json=payload))
+            ok = obj.ack(obj.client.post("/api/speed", json=payload)) and ok
+    exit_if_write_failed(ok)
